@@ -1,5 +1,5 @@
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Papa from "papaparse";
 import {
   ResponsiveContainer,
@@ -25,9 +25,13 @@ import "leaflet/dist/leaflet.css";
 
 const NASA_DATE = "2026-11-01";
 
-function LocationSelector({ onSelect }) {
+
+  function LocationSelector({ onSelect }) {
   useMapEvents({
     click(event) {
+      console.log("MAP CLICK DETECTED:", event.latlng);
+console.log("LATITUDE:", event.latlng.lat);
+console.log("LONGITUDE:", event.latlng.lng);
       onSelect({
         latitude: event.latlng.lat,
         longitude: event.latlng.lng,
@@ -47,84 +51,76 @@ const [vegetationError, setVegetationError] = useState("");
   
 
 
+
+
+
+
 const handleLocationSelect = async (location) => {
+;
+
   setSelectedLocation(location);
   setLoadingVegetation(true);
   setVegetationError("");
   setNdviData([]);
 
   try {
-    // Submit selected coordinates to NASA through Flask
-    const submitResponse = await fetch(
-      "http://127.0.0.1:5000/api/vegetation/request",
+    const response = await fetch(
+      "http://127.0.0.1:5000/api/vegetation/direct",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(location),
+        body: JSON.stringify({
+          latitude: location.latitude,
+          longitude: location.longitude,
+        }),
       }
     );
 
-    const submitData = await submitResponse.json();
-
-    if (!submitResponse.ok) {
+    const result = await response.json();
+console.log("FULL NASA RESPONSE:", result);
+console.log("NASA RECORDS:", result.records);
+console.log("FIRST NASA RECORD:", result.records?.[0]);
+    if (!response.ok) {
       throw new Error(
-        submitData.error || "NASA request could not be submitted."
+        result.error || "Could not retrieve NASA vegetation data."
       );
     }
 
-    const taskId = submitData.task_id;
+    const records = (result.records || []).map((item) => ({
+      ...item,
+      ndvi: Number(item.ndvi),
+      quality: Number(item.quality),
+      reliable: Number(item.quality) === 0,
+    }));
 
-    // Check NASA task until processing is complete
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, 10000)
+    setNdviData(records);
+
+    if (records.length === 0) {
+      setVegetationError(
+        "No valid NASA vegetation observations are available for this location."
       );
-
-      const resultResponse = await fetch(
-        `http://127.0.0.1:5000/api/vegetation/results/${taskId}`
-      );
-
-      const resultData = await resultResponse.json();
-
-      if (resultResponse.status === 202) {
-        continue;
-      }
-
-      if (!resultResponse.ok) {
-        throw new Error(
-          resultData.error || "Could not retrieve NASA results."
-        );
-      }
-
-      setNdviData(
-        (resultData.records || []).map((item) => ({
-          ...item,
-          reliable: item.quality === "VI produced with good quality",
-        }))
-      );
-
-      return;
     }
 
-    throw new Error(
-      "NASA is taking longer than expected. Please try again later."
-    );
+    console.log("NASA MODIS vegetation data:", result);
 
   } catch (error) {
+    console.error("Vegetation data error:", error);
     setVegetationError(error.message);
   } finally {
     setLoadingVegetation(false);
   }
 };
 
+
+
 const reliableNdviData = ndviData.filter(
   (item) =>
     Number.isFinite(item.ndvi) &&
     item.ndvi >= -1 &&
     item.ndvi <= 1 &&
-    item.quality !== "Pixel not produced due to other reasons than clouds"
+    (item.quality === 0 || item.quality === 1)
 );
 
 const averageNDVI =

@@ -10,6 +10,15 @@ const MONTHS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+function getNoteDuration(records, index) {
+  const previous = records[index - 1];
+  const change = previous
+    ? Math.abs(records[index].value - previous.value)
+    : 0;
+
+  return Math.max(0.30, Math.min(0.60, 0.42 + change * 0.15));
+}
+
 export default function ClimateExperience() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,8 +31,11 @@ export default function ClimateExperience() {
   const oscillatorRef = useRef(null);
   const gainRef = useRef(null);
   const timerRef = useRef(null);
-  const startTimeRef = useRef(0);
-  const positionRef = useRef(0);
+
+  // Audio playback timing
+  const playbackStartRef = useRef(0);
+  const playbackOffsetRef = useRef(0);
+  const totalDurationRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -43,7 +55,7 @@ export default function ClimateExperience() {
         const lines = csv.trim().split(/\r?\n/);
 
         const headerIndex = lines.findIndex((line) =>
-          line.startsWith("Year,")
+          line.replace(/^\uFEFF/, "").startsWith("Year,")
         );
 
         if (headerIndex === -1) {
@@ -59,13 +71,13 @@ export default function ClimateExperience() {
           if (!Number.isFinite(year)) continue;
 
           for (let i = 0; i < 12; i++) {
-            const value = Number(columns[i + 1]);
+            const rawValue = columns[i + 1]?.trim();
 
-            if (
-              columns[i + 1] &&
-              columns[i + 1].trim() !== "***" &&
-              Number.isFinite(value)
-            ) {
+            if (!rawValue || rawValue.includes("*")) continue;
+
+            const value = Number(rawValue);
+
+            if (Number.isFinite(value)) {
               parsed.push({
                 year,
                 month: i,
@@ -104,8 +116,15 @@ export default function ClimateExperience() {
 
   const latest = records[records.length - 1];
 
+  function clearPlaybackTimer() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
   function stopAudio() {
-    clearTimeout(timerRef.current);
+    clearPlaybackTimer();
 
     try {
       oscillatorRef.current?.stop();
@@ -115,13 +134,49 @@ export default function ClimateExperience() {
 
     oscillatorRef.current = null;
     gainRef.current = null;
-    positionRef.current = 0;
+
+    playbackStartRef.current = 0;
+    playbackOffsetRef.current = 0;
+    totalDurationRef.current = 0;
+
     setPlaying(false);
     setPaused(false);
     setProgress(0);
   }
 
-  function startSound(fromPosition = 0) {
+  function trackProgress(context) {
+    clearPlaybackTimer();
+
+    timerRef.current = window.setInterval(() => {
+      const elapsed =
+        playbackOffsetRef.current +
+        Math.max(0, context.currentTime - playbackStartRef.current);
+
+      const total = totalDurationRef.current;
+
+      if (!total) return;
+
+      const percentage = Math.min(100, (elapsed / total) * 100);
+      setProgress(percentage);
+
+      if (elapsed >= total) {
+        clearPlaybackTimer();
+
+        oscillatorRef.current = null;
+        gainRef.current = null;
+
+        playbackStartRef.current = 0;
+        playbackOffsetRef.current = 0;
+        totalDurationRef.current = 0;
+
+        setProgress(100);
+        setPlaying(false);
+        setPaused(false);
+      }
+    }, 100);
+  }
+
+  async function startSound(fromPosition = 0) {
     if (!records.length) return;
 
     const AudioContextClass =
@@ -132,125 +187,181 @@ export default function ClimateExperience() {
       return;
     }
 
-    const context =
-      audioRef.current || new AudioContextClass();
-
-    audioRef.current = context;
-
-    if (context.state === "suspended") {
-      context.resume();
-    }
-
     try {
-      oscillatorRef.current?.stop();
-    } catch {
-      // Previous sound may already have ended.
-    }
+      const context = audioRef.current || new AudioContextClass();
+      audioRef.current = context;
 
-    clearTimeout(timerRef.current);
+      if (context.state === "suspended") {
+        await context.resume();
+      }
 
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
+      clearPlaybackTimer();
 
-    oscillator.type = "sine";
-    gain.gain.value = 0.0001;
+      try {
+        oscillatorRef.current?.stop();
+      } catch {
+        // Previous oscillator may already have stopped.
+      }
 
-    oscillator.connect(gain);
-    gain.connect(context.destination);
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
 
-    const startAt = context.currentTime + 0.08;
-    const noteDuration = 0.42;
-    const remaining = records.slice(fromPosition);
+      oscillator.type = "sine";
+      gain.gain.value = 0.0001;
 
-    remaining.forEach((record, index) => {
-      const time = startAt + index * noteDuration;
+      oscillator.connect(gain);
+      gain.connect(context.destination);
 
-      // Map the NASA temperature anomaly to a musical pitch.
-      const frequency = Math.max(
-        150,
-        Math.min(650, 330 + record.value * 115)
+      const startAt = context.currentTime + 0.08;
+      const remaining = records.slice(fromPosition);
+
+      // Calculate the duration of the complete 24-month sequence.
+      const totalDuration = records.reduce(
+        (total, record, index) =>
+          total + getNoteDuration(records, index),
+        0
       );
 
-      oscillator.frequency.setValueAtTime(frequency, time);
+      // Calculate how much of the sequence is before this starting point.
+      const elapsedBeforeStart = records
+        .slice(0, fromPosition)
+        .reduce(
+          (total, record, index) =>
+            total + getNoteDuration(records, index),
+          0
+        );
 
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.linearRampToValueAtTime(0.12, time + 0.07);
-      gain.gain.setValueAtTime(0.12, time + 0.24);
-      gain.gain.linearRampToValueAtTime(
-        0.0001,
-        time + noteDuration - 0.03
+      let elapsed = 0;
+
+      remaining.forEach((record, index) => {
+        const originalIndex = fromPosition + index;
+        const previous = remaining[index - 1];
+
+        const change = previous
+          ? Math.abs(record.value - previous.value)
+          : 0;
+
+        // Temperature anomaly controls pitch.
+        const frequency = Math.max(
+          150,
+          Math.min(650, 330 + record.value * 115)
+        );
+
+        // Larger month-to-month changes slightly alter note duration.
+        const noteDuration = getNoteDuration(
+          records,
+          originalIndex
+        );
+
+        // Temperature anomaly also controls sound intensity.
+        const intensity = Math.max(
+          0.04,
+          Math.min(0.18, 0.09 + record.value * 0.035)
+        );
+
+        const time = startAt + elapsed;
+
+        oscillator.frequency.setValueAtTime(frequency, time);
+
+        gain.gain.setValueAtTime(0.0001, time);
+        gain.gain.linearRampToValueAtTime(
+          intensity,
+          time + 0.07
+        );
+        gain.gain.setValueAtTime(
+          intensity,
+          time + noteDuration * 0.55
+        );
+        gain.gain.linearRampToValueAtTime(
+          0.0001,
+          time + noteDuration
+        );
+
+        elapsed += noteDuration;
+      });
+
+      oscillator.start(startAt);
+      oscillator.stop(startAt + elapsed);
+
+      oscillatorRef.current = oscillator;
+      gainRef.current = gain;
+
+      playbackStartRef.current = startAt;
+      playbackOffsetRef.current = elapsedBeforeStart;
+      totalDurationRef.current = totalDuration;
+
+      setProgress(
+        (elapsedBeforeStart / totalDuration) * 100
       );
-    });
 
-    const totalDuration = remaining.length * noteDuration;
+      setPlaying(true);
+      setPaused(false);
 
-    oscillator.start(startAt);
-    oscillator.stop(startAt + totalDuration);
-
-    oscillatorRef.current = oscillator;
-    gainRef.current = gain;
-    positionRef.current = fromPosition;
-    startTimeRef.current = Date.now();
-
-    setPlaying(true);
-    setPaused(false);
-
-    timerRef.current = window.setTimeout(() => {
-      setProgress(100);
+      trackProgress(context);
+    } catch (err) {
       setPlaying(false);
       setPaused(false);
-      positionRef.current = 0;
-      oscillatorRef.current = null;
-      gainRef.current = null;
-    }, totalDuration * 1000 + 150);
+      setError("Audio playback failed. Please try again.");
+    }
   }
 
-  function play() {
+  async function play() {
     if (!records.length) return;
 
     if (paused && audioRef.current) {
-      audioRef.current.resume();
-      setPaused(false);
-      setPlaying(true);
+      try {
+        await audioRef.current.resume();
+        setPaused(false);
+        setPlaying(true);
+        trackProgress(audioRef.current);
+      } catch {
+        setError("Could not resume audio playback.");
+      }
+
       return;
     }
 
     startSound(0);
   }
 
-  function pause() {
-    if (audioRef.current && playing) {
-      audioRef.current.suspend();
+  async function pause() {
+    if (!audioRef.current || !playing) return;
+
+    try {
+      // Capture progress before suspending the audio clock.
+      const context = audioRef.current;
+
+      const elapsed =
+        playbackOffsetRef.current +
+        Math.max(0, context.currentTime - playbackStartRef.current);
+
+      if (totalDurationRef.current) {
+        setProgress(
+          Math.min(
+            100,
+            (elapsed / totalDurationRef.current) * 100
+          )
+        );
+      }
+
+      clearPlaybackTimer();
+
+      await context.suspend();
+
       setPaused(true);
       setPlaying(false);
+    } catch {
+      setError("Could not pause audio playback.");
     }
   }
 
   function replay() {
-    if (audioRef.current) {
-      audioRef.current.resume();
-    }
     startSound(0);
   }
 
   useEffect(() => {
-    if (!playing) return;
-
-    const interval = window.setInterval(() => {
-      const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      const duration = records.length * 0.42;
-
-      setProgress(
-        Math.min(100, (elapsed / duration) * 100)
-      );
-    }, 100);
-
-    return () => window.clearInterval(interval);
-  }, [playing, records.length]);
-
-  useEffect(() => {
     return () => {
-      clearTimeout(timerRef.current);
+      clearPlaybackTimer();
 
       try {
         oscillatorRef.current?.stop();
@@ -371,54 +482,56 @@ export default function ClimateExperience() {
                     />
                   ))}
 
-                  {records.length > 1 && (() => {
-                    const min = Math.min(
-                      ...records.map((r) => r.value),
-                      0
-                    );
-                    const max = Math.max(
-                      ...records.map((r) => r.value),
-                      0.5
-                    );
-                    const range = max - min || 1;
+                  {records.length > 1 &&
+                    (() => {
+                      const min = Math.min(
+                        ...records.map((r) => r.value),
+                        0
+                      );
+                      const max = Math.max(
+                        ...records.map((r) => r.value),
+                        0.5
+                      );
+                      const range = max - min || 1;
 
-                    const points = records.map((r, i) => ({
-                      x: (i / (records.length - 1)) * 600,
-                      y: 165 - ((r.value - min) / range) * 135,
-                    }));
+                      const points = records.map((r, i) => ({
+                        x: (i / (records.length - 1)) * 600,
+                        y: 165 - ((r.value - min) / range) * 135,
+                      }));
 
-                    const path = points
-                      .map((p, i) =>
-                        `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`
-                      )
-                      .join(" ");
+                      const path = points
+                        .map(
+                          (p, i) =>
+                            `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`
+                        )
+                        .join(" ");
 
-                    return (
-                      <>
-                        <path
-                          d={`${path} L 600 190 L 0 190 Z`}
-                          fill="url(#climateArea)"
-                        />
-                        <path
-                          d={path}
-                          fill="none"
-                          stroke="#c77d59"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {points.map((p, i) => (
-                          <circle
-                            key={i}
-                            cx={p.x}
-                            cy={p.y}
-                            r={i === points.length - 1 ? 5 : 2.2}
-                            fill="#c77d59"
+                      return (
+                        <>
+                          <path
+                            d={`${path} L 600 190 L 0 190 Z`}
+                            fill="url(#climateArea)"
                           />
-                        ))}
-                      </>
-                    );
-                  })()}
+                          <path
+                            d={path}
+                            fill="none"
+                            stroke="#c77d59"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {points.map((p, i) => (
+                            <circle
+                              key={i}
+                              cx={p.x}
+                              cy={p.y}
+                              r={i === points.length - 1 ? 5 : 2.2}
+                              fill="#c77d59"
+                            />
+                          ))}
+                        </>
+                      );
+                    })()}
                 </svg>
 
                 <div className="climate-chart-labels">
@@ -439,7 +552,11 @@ export default function ClimateExperience() {
                   </div>
 
                   <span className={playing ? "audio-live" : "audio-idle"}>
-                    {playing ? "● PLAYING" : paused ? "Ⅱ PAUSED" : "○ READY"}
+                    {playing
+                      ? "● PLAYING"
+                      : paused
+                        ? "Ⅱ PAUSED"
+                        : "○ READY"}
                   </span>
                 </div>
 
@@ -448,7 +565,9 @@ export default function ClimateExperience() {
                     <span
                       key={i}
                       style={{
-                        "--wave-height": `${15 + ((i * 19 + i * i) % 75)}%`,
+                        "--wave-height": `${
+                          15 + ((i * 19 + i * i) % 75)
+                        }%`,
                       }}
                     />
                   ))}
@@ -459,7 +578,10 @@ export default function ClimateExperience() {
                 </div>
 
                 <div className="climate-controls">
-                  <button onClick={play} disabled={playing || !records.length}>
+                  <button
+                    onClick={play}
+                    disabled={playing || !records.length}
+                  >
                     ▶ Play
                   </button>
 
@@ -467,20 +589,26 @@ export default function ClimateExperience() {
                     Ⅱ Pause
                   </button>
 
-                  <button onClick={replay} disabled={!records.length}>
+                  <button
+                    onClick={replay}
+                    disabled={!records.length}
+                  >
                     ↺ Replay
                   </button>
 
-                  <button onClick={stopAudio} disabled={!playing && !paused}>
+                  <button
+                    onClick={stopAudio}
+                    disabled={!playing && !paused}
+                  >
                     ■ Stop
                   </button>
                 </div>
 
                 <p className="climate-audio-note">
                   24 recent monthly observations · Each note's pitch
-                  represents its temperature anomaly. This is a
-                  simple illustrative sonification, not recorded
-                  environmental audio.
+                  and intensity are controlled by its temperature
+                  anomaly. This is a generated data sonification,
+                  not recorded environmental audio.
                 </p>
               </div>
             </>

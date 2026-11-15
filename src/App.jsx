@@ -4,7 +4,9 @@ import Earth3D from "./Earth3D";
 import OceanMap from "./OceanMap";
 import "./App.css";
 import ClimateMap from "./ClimateMap";
-import LandExperience from "./LandExperience";
+
+
+import NaturalHazards from "./NaturalHazards";
 
 
 const topics = [
@@ -26,17 +28,9 @@ const topics = [
     label: "OCEAN MOVEMENT",
     value: "IN MOTION",
   },
+  
   {
     number: "03",
-    title: "Land & Ecosystems",
-    detail: "Discover how Earth's living landscapes evolve.",
-    icon: "⌁",
-    visual: "land",
-    label: "LIVING LANDSCAPES",
-    value: "EVOLVING",
-  },
-  {
-    number: "04",
     title: "Natural Hazards",
     detail: "Hear the patterns behind our planet's extremes.",
     icon: "✳",
@@ -217,6 +211,9 @@ function ClimateExperience({ onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playing, setPlaying] = useState(false);
+const [paused, setPaused] = useState(false);
+const [progress, setProgress] = useState(0);
 
   const audioRef = useRef(null);
   const [landMessage, setLandMessage] = useState("");
@@ -519,6 +516,9 @@ useEffect(() => {
     }
 
     setIsPlaying(false);
+    setPlaying(false);
+setPaused(false);
+setProgress(0);
   }
 
   function playTemperatureSound(reading, isLocationTemperature = false) {
@@ -617,37 +617,62 @@ useEffect(() => {
   );
 }
 
-  function startPlayback() {
-    if (!recordsRef.current.length) return;
+  
+function startPlayback() {
+  if (!recordsRef.current.length) return;
 
-    stopTimer();
+  stopTimer();
 
-    let next = indexRef.current;
+  let next = indexRef.current;
+  const totalSteps = recordsRef.current.length;
 
-    if (next >= recordsRef.current.length) next = 0;
+  if (next >= totalSteps) next = 0;
 
-    setIsPlaying(true);
-    playSelectedReading(next);
+  setIsPlaying(true);
+  setPlaying(true);
+  setPaused(false);
+  setProgress(0);
 
-    timerRef.current = setInterval(() => {
-      next += 1;
+  playSelectedReading(next);
 
-      if (next >= recordsRef.current.length) {
-        stopTimer();
-        setIsPlaying(false);
-        return;
-      }
+  const startTime = Date.now();
+  const duration = (totalSteps - next) * 2600;
 
-      playSelectedReading(next);
-    }, 2600);
-  }
+  timerRef.current = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const percentage = Math.min(100, (elapsed / duration) * 100);
+
+    setProgress(percentage);
+
+    const newIndex = next + Math.floor(elapsed / 2600);
+
+    if (newIndex < totalSteps && newIndex !== indexRef.current) {
+      indexRef.current = newIndex;
+      setSelectedIndex(newIndex);
+      playSelectedReading(newIndex);
+    }
+
+    if (percentage >= 100) {
+      stopTimer();
+      setIsPlaying(false);
+      setPlaying(false);
+      setPaused(false);
+      setProgress(100);
+    }
+  }, 100);
+}
+
 
   function togglePlayback() {
     if (isPlaying) {
+      setPlaying(false);
+setPaused(true);
       stopTimer();
       if (audioRef.current) audioRef.current.suspend();
       setIsPlaying(false);
     } else {
+      setPlaying(true);
+setPaused(false);
       if (audioRef.current?.state === "suspended") {
         audioRef.current.resume();
       }
@@ -1885,6 +1910,39 @@ useEffect(() => {
         <span>{monthNames[records[0].month]} {records[0].year}</span>
         <span>{monthNames[latest.month]} {latest.year}</span>
       </div>
+            <div style={{
+        marginTop: 25,
+        maxWidth: "480px"
+      }}>
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "11px",
+          color: "#718176",
+          marginBottom: "9px"
+        }}>
+          <span>
+            {playing ? "PLAYING THROUGH THE MONTHS" : paused ? "PAUSED" : "MONTHLY PLAYBACK PROGRESS"}
+          </span>
+          <span>{Math.round(progress)}%</span>
+        </div>
+
+        <div style={{
+          width: "100%",
+          height: "6px",
+          background: "#e8e2d8",
+          borderRadius: "10px",
+          overflow: "hidden"
+        }}>
+          <div style={{
+            width: `${progress}%`,
+            height: "100%",
+            background: "#df995b",
+            borderRadius: "10px",
+            transition: "width 0.1s linear"
+          }} />
+        </div>
+      </div>
 
       <div className="living-stats">
         <div>
@@ -2060,6 +2118,34 @@ useEffect(() => {
       Hear the temperature of this location
       transformed into a musical experience.
     </p>
+    <div className="location-sound-explanation">
+  <h3>How Temperature Becomes Sound</h3>
+
+  <p>
+    Each NASA temperature reading is converted into a musical tone.
+    The sound changes according to the temperature value:
+  </p>
+
+  <ul>
+    <li>
+      <strong>Lower temperatures:</strong> Produce deeper pitches
+      and softer sounds.
+    </li>
+    <li>
+      <strong>Higher temperatures:</strong> Produce higher pitches,
+      louder sounds and brighter tones.
+    </li>
+    <li>
+      <strong>Three sound layers:</strong> A main tone, a higher
+      harmonic and a lower bass tone combine to create the sound.
+    </li>
+  </ul>
+
+  <p>
+    The tone lasts approximately 2.6 seconds. Its rhythm remains
+    constant while its pitch, volume and tone quality change.
+  </p>
+</div>
 
     <button
       className="living-play"
@@ -3110,15 +3196,9 @@ if (activeTopic === "ocean") {
     />
   );
 }
-if (activeTopic === "land") {
-  return (
-    <LandExperience
-      onBack={() => {
-        setActiveTopic(null);
-        window.location.hash = "home";
-      }}
-    />
-  );
+
+if (activeTopic === "hazards") {
+  return <NaturalHazards />;
 }
 
   return (
@@ -3130,10 +3210,10 @@ if (activeTopic === "land") {
       </div>
 
       <header className="navbar">
-        <a href="#home" className="brand" aria-label="Anuwaad home">
-          <span className="brand-symbol">✧</span>
-          <span>अनुवाद</span>
-        </a>
+        <a href="#home" className="brand" aria-label="अनुनाद home">
+  <span className="brand-symbol">✧</span>
+  <span>अनुनाद</span>
+</a>
 
         <nav className="nav-links" aria-label="Main navigation">
           <a href="#home">Home</a>
@@ -3148,60 +3228,65 @@ if (activeTopic === "land") {
         </a>
       </header>
 
-      <section className="hero" id="home">
-        <div className="hero-copy">
-          <span className="eyebrow hero-eyebrow">
-            <span className="eyebrow-line" />
-            AN EARTH SCIENCE EXPERIENCE
-          </span>
+      
+<section className="hero cd-hero" id="home">
+  <div className="cd-hero-copy">
+    <span className="cd-kicker">
+      <span className="cd-kicker-line" />
+      AN EARTH SCIENCE EXPERIENCE
+    </span>
 
-          <h1>
-            Hear the
-            <br />
-            Heartbeat
-            <br />
-            <span>of Earth.</span>
-          </h1>
+    <h1>
+      Hear the
+      <br />
+      Heartbeat
+      <br />
+      <span>of Earth.</span>
+    </h1>
 
-          <p className="hero-description">
-            What if you could hear our planet changing?
-            Explore NASA Earth science through visualizations
-            transformed into sound.
-          </p>
+    <p>
+      Every movement, every shift, every changing pattern tells a story.
+      Explore our living planet through NASA Earth data — transformed
+      into sights and sounds you can experience.
+    </p>
 
-          
-          </div>
+    
 
-          
+    <div className="cd-hero-index">
+      <span className="cd-index-dot" />
+      REAL EARTH DATA · INTERACTIVE DISCOVERY · DATA-DRIVEN SOUND
+    </div>
+  </div>
 
-        <div className="hero-visual">
-          <div className="hero-orbit orbit-a" />
-          <div className="hero-orbit orbit-b" />
-          <div className="hero-orbit orbit-c" />
-          <div className="earth-halo" />
+  <div className="cd-hero-visual">
+    <div className="cd-visual-label cd-label-top">
+      <span>PLANET EARTH</span>
+      <span>01 / 04</span>
+    </div>
 
-          <Earth3D />
+    <div className="cd-earth-frame">
+      <div className="cd-earth-glow" />
+      <div className="cd-earth-ring cd-ring-one" />
+      <div className="cd-earth-ring cd-ring-two" />
+      <Earth3D />
+    </div>
 
-          <div className="earth-caption">
-            <span className="caption-dot" />
-            <span>OUR HOME · ONE CONNECTED PLANET</span>
-          </div>
+    <div className="cd-science-note">
+      <span className="cd-note-dot" />
+      <div>
+        <strong>ONE CONNECTED PLANET</strong>
+        <small>OBSERVE · EXPLORE · UNDERSTAND</small>
+      </div>
+    </div>
 
-          <div className="floating-coordinate coordinate-one">
-            <span>01 / 04</span>
-            <small>ATMOSPHERE</small>
-          </div>
+    <div className="cd-visual-label cd-label-bottom">
+      EARTH SYSTEMS / CONTINUOUSLY CHANGING
+    </div>
+  </div>
+</section>
 
-          <div className="floating-coordinate coordinate-two">
-            <span>EARTH</span>
-            <small>IN MOTION</small>
-          </div>
-        </div>
+<Dashboard />
 
-        
-      </section>
-
-      <Dashboard />
 
       <section className="topics-section" id="topics">
         <div className="topics-atmosphere" aria-hidden="true">
@@ -3232,7 +3317,7 @@ if (activeTopic === "land") {
           </p>
         </div>
 
-        <div className="topic-grid">
+<div className="topic-grid topic-grid-centered">
           {topics.map((topic) => (
             <a
   className={`topic-card topic-card-${topic.visual}`}
@@ -3242,8 +3327,9 @@ if (activeTopic === "land") {
     if (
   topic.visual === "climate" ||
   topic.visual === "ocean" ||
-  topic.visual === "land"
-)  {
+  topic.visual === "land" ||
+  topic.visual === "hazards"
+) {
       event.preventDefault();
       setActiveTopic(topic.visual);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -3279,49 +3365,72 @@ if (activeTopic === "land") {
         </div>
 
         <div className="topics-footer-line">
-          <span>01 — 04 / EARTH SYSTEMS</span>
+          <span>01 — 03 / EARTH SYSTEMS</span>
           <span>CONNECTED BY ONE PLANET</span>
         </div>
       </section>
 
-      <section className="experience-section" id="experience">
-        <div className="experience-copy">
-          <span className="eyebrow">BEYOND WHAT WE CAN SEE</span>
-          <h2>
-            What does Earth <span>sound like?</span>
-          </h2>
-          <p>
-            Sonification translates data into sound. In Anuwaad,
-            patterns in NASA Earth observations shape pitch,
-            rhythm and intensity — helping everyone experience
-            the planet in a new way.
-          </p>
-          <a href="#topics" className="primary-button">
-            Explore the experience <span>↗</span>
-          </a>
-        </div>
+      
+<section className="experience-section experience-cinematic" id="experience">
+  <div className="experience-atmosphere">
+    <div className="experience-glow" />
+    <div className="experience-ring" />
+  </div>
 
-        <div className="sound-visual">
-          <div className="sound-orbit" />
-          <div className="waveform">
-            {Array.from({ length: 50 }, (_, i) => (
-              <span
-                key={i}
-                style={{
-                  "--bar": `${12 + ((i * 17 + i * i * 3) % 72)}%`,
-                }}
-              />
-            ))}
-          </div>
-          <div className="sound-caption">
-            <span>DATA → SOUND</span>
-            <span>SONIFICATION PREVIEW</span>
-          </div>
-        </div>
-      </section>
+  <div className="experience-copy">
+    <span className="eyebrow">
+      <span className="eyebrow-line" />
+      BEYOND WHAT WE CAN SEE
+    </span>
+
+    <h2>
+      What does Earth
+      <br />
+      <span>sound like?</span>
+    </h2>
+
+    <p>
+      Every ocean movement, every shifting climate pattern,
+      every pulse of our living planet carries a rhythm.
+      Through sonification, NASA Earth observations become
+      sounds that help us experience Earth differently.
+    </p>
+
+    <div className="experience-note">
+      <span className="experience-note-dot" />
+      REAL DATA · TRANSFORMED INTO SOUND
+    </div>
+  </div>
+
+  <div className="sound-visual">
+    <div className="sound-visual-top">
+      <span>EARTH FREQUENCIES</span>
+      <span>01 / SONIFICATION</span>
+    </div>
+
+    <div className="sound-orbit" />
+
+    <div className="waveform">
+      {Array.from({ length: 50 }, (_, i) => (
+        <span
+          key={i}
+          style={{
+            "--bar": `${12 + ((i * 17 + i * i * 3) % 72)}%`,
+          }}
+        />
+      ))}
+    </div>
+
+    <div className="sound-caption">
+      <span>DATA <span className="sound-arrow">→</span> SOUND</span>
+      <span>LISTEN TO OUR LIVING PLANET</span>
+    </div>
+  </div>
+</section>
+
 
       <section className="about-section" id="about">
-        <span className="eyebrow">ABOUT ANUWAAD</span>
+        <span className="eyebrow">ABOUT ANUNAAD</span>
         <h2>
           Making Earth science
           <br />
@@ -3340,9 +3449,9 @@ if (activeTopic === "land") {
 
       <footer className="footer">
         <a href="#home" className="brand">
-          <span className="brand-symbol">✧</span>
-          <span>अनुवाद</span>
-        </a>
+  <span className="brand-symbol">✧</span>
+  <span>अनुनाद</span>
+</a>
         <span>BRINGING EARTH SCIENCE TO THE SENSES.</span>
         <a href="#home">BACK TO TOP ↑</a>
       </footer>
