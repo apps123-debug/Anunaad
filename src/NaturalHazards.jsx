@@ -14,7 +14,7 @@ const NASA_EONET_API =
   "https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=500";
 
 const FIRMS_API =
-  "http://127.0.0.1:5000/api/hazards/firms?days=3";
+  "https://anunaad-backend.onrender.com/api/hazards/firms?days=3";
 
 // Get the latest geographic position of a NASA EONET event
 function getEventPosition(event) {
@@ -319,7 +319,7 @@ const [iceDataError, setIceDataError] = useState("");
         setStormDataError("");
 
         const response = await fetch(
-          "http://127.0.0.1:5000/api/hazards/storms"
+          "https://anunaad-backend.onrender.com/api/hazards/storms"
         );
 
         const data = await response.json();
@@ -411,7 +411,7 @@ const [iceDataError, setIceDataError] = useState("");
   const fetchIceData = async () => {
     try {
       const response = await fetch(
-        "http://127.0.0.1:5000/api/hazards/sea-ice"
+        "https://anunaad-backend.onrender.com/api/hazards/sea-ice"
       );
 
       if (!response.ok) {
@@ -557,7 +557,7 @@ useEffect(() => {
       setIceDataError("");
 
       const response = await fetch(
-        "http://127.0.0.1:5000/api/hazards/sea-ice"
+        "https://anunaad-backend.onrender.com/api/hazards/sea-ice"
       );
 
       if (!response.ok) {

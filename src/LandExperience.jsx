@@ -65,7 +65,7 @@ const handleLocationSelect = async (location) => {
 
   try {
     const response = await fetch(
-      "http://127.0.0.1:5000/api/vegetation/direct",
+      "https://anunaad-backend.onrender.com/api/vegetation/direct",
       {
         method: "POST",
         headers: {
